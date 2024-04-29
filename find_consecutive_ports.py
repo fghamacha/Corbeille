@@ -5,72 +5,75 @@ from ansible.module_utils.basic import AnsibleModule
 import socket
 import configparser
 
-# Fonction pour trouver un range de ports consécutifs disponibles à partir d'un port de départ
-def find_consecutive_ports(start_port, num_ports):
-    while True:
+# Function to check if ports already exist in the ports inventory
+def check_ports_in_inventory(config, start_port, num_ports):
+    for section in config.sections():
+        current_start_port = int(config[section]['start_port'])
+        current_end_port = int(config[section]['end_port'])
+        if start_port + num_ports - 1 < current_start_port or start_port > current_end_port:
+            continue  # The port range does not interfere with the current range, move to the next section
+        else:
+            return True  # The port range is already used in the inventory
+    return False
+
+# Function to check if ports are already in listening state on the server
+def check_ports_listening(start_port, num_ports):
+    for port in range(start_port, start_port + num_ports):
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
             try:
-                s.bind(('localhost', start_port))
+                s.bind(('localhost', port))
             except OSError:
-                start_port += 50
-                continue
-        
-        consecutive_ports = [start_port]
-        for port in range(start_port + 1, start_port + num_ports):
-            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-                try:
-                    s.bind(('localhost', port))
-                    consecutive_ports.append(port)
-                except OSError:
-                    start_port += 50
-                    break
-        else:
-            return consecutive_ports
+                return True  # The port is in listening state
+    return False
 
-# Fonction pour vérifier si les ports existent déjà dans le fichier d'inventaire
-def check_ports_in_inventory(config_file, ports):
+# Function to find a range of consecutive available ports starting from a given start port
+def find_consecutive_ports(start_port, num_ports, inventory_file):
     config = configparser.ConfigParser()
-    config.read(config_file)
-    for section in config.sections():
-        start_port = int(config[section]['start_port'])
-        end_port = int(config[section]['end_port'])
-        for port in ports:
-            if start_port <= port <= end_port:
-                return False
-    return True
+    config.read(inventory_file)
+    
+    while True:
+        # Check if the port range already exists in the inventory
+        if not check_ports_in_inventory(config, start_port, num_ports):
+            # Check if the ports are not in listening state on the server
+            if not check_ports_listening(start_port, num_ports):
+                return list(range(start_port, start_port + num_ports))
 
-# Fonction pour écrire les ports trouvés dans le fichier d'inventaire
-def store_ports_in_inventory(config_file, ports):
-    if check_ports_in_inventory(config_file, ports):
-        config = configparser.ConfigParser()
-        config.read(config_file)
-        section_name = 'Ports'  # Nom de la section pour les ports
-        config[section_name] = {'start_port': str(ports[0]), 'end_port': str(ports[-1])}
-        with open(config_file, 'w') as configfile:
-            config.write(configfile)
-    else:
-        print("Les ports existent déjà dans le fichier d'inventaire.")
+        # Increment the start port if the port range is already used
+        start_port += 50
 
-# Fonction principale du module Ansible
+# Function to write the found ports into the ports inventory
+def store_ports_in_inventory(inventory_file, start_port, num_ports):
+    config = configparser.ConfigParser()
+    config.read(inventory_file)
+    section_name = 'Ports'  # Name of the section for ports
+    config[section_name] = {'start_port': str(start_port), 'end_port': str(start_port + num_ports - 1)}
+    with open(inventory_file, 'w') as configfile:
+        config.write(configfile)
+
+# Main function of the Ansible module
 def main():
     module = AnsibleModule(
         argument_spec=dict(
-            start_port=dict(type='int', required=True),  # Argument pour spécifier le port de départ
-            num_ports=dict(type='int', required=True),   # Argument pour spécifier le nombre de ports
-            config_file=dict(type='str', required=True),  # Argument pour spécifier le fichier d'inventaire
-            application_name=dict(type='str', required=True)  # Argument pour spécifier le nom de l'application
+            start_port=dict(type='int', required=True),  # Argument to specify the start port
+            num_ports=dict(type='int', required=True),   # Argument to specify the number of ports
+            inventory_file=dict(type='str', required=True),  # Argument to specify the ports inventory
+            application_name=dict(type='str', required=True)  # Argument to specify the application name
         )
     )
 
-    start_port = module.params['start_port']  # Récupère le port de départ depuis les paramètres passés
-    num_ports = module.params['num_ports']    # Récupère le nombre de ports depuis les paramètres passés
-    config_file = module.params['config_file']  # Récupère le fichier d'inventaire depuis les paramètres passés
-    application_name = module.params['application_name']  # Récupère le nom de l'application depuis les paramètres passés
+    start_port = module.params['start_port']  # Retrieve the start port from the passed parameters
+    num_ports = module.params['num_ports']    # Retrieve the number of ports from the passed parameters
+    inventory_file = module.params['inventory_file']  # Retrieve the ports inventory from the passed parameters
+    application_name = module.params['application_name']  # Retrieve the application name from the passed parameters
     
-    ports = find_consecutive_ports(start_port, num_ports)  # Trouve les ports consécutifs
-    store_ports_in_inventory(config_file, ports)  # Écrit les ports trouvés dans le fichier d'inventaire
+    # Find consecutive ports
+    ports = find_consecutive_ports(start_port, num_ports, inventory_file)
     
-    module.exit_json(changed=True, ports=ports)  # Termine l'exécution du module en retournant les ports trouvés
+    # Write the found ports into the ports inventory
+    store_ports_in_inventory(inventory_file, ports[0], num_ports)
+    
+    # Exit the module execution with the found ports
+    module.exit_json(changed=True, ports=ports)
 
 if __name__ == '__main__':
     main()
