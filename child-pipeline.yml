@@ -1,0 +1,184 @@
+Analyse précise de ce que child-pipeline.yml contiendra après l'exécution du script
+
+
+---
+
+1. Structure générée dans child-pipeline.yml
+
+Le script que vous avez fourni boucle sur chaque ressource listée par terraform state list (stockée dans all_resources.txt) et génère des jobs correspondants dans child-pipeline.yml. Ces jobs permettent :
+
+1. Planification de rafraîchissement des ressources :
+Job pour exécuter terraform plan -refresh-only sur une ressource spécifique.
+
+
+2. Suppression des ressources :
+Job pour exécuter terraform state rm sur une ressource.
+
+
+3. Réparation des ressources marquées comme "tainted" :
+Job pour exécuter terraform untaint sur une ressource et appliquer les changements.
+
+
+4. Recréation des ressources :
+Job pour recréer une ressource en utilisant l'option -replace.
+
+
+5. Importation des ressources :
+Job pour importer une ressource si nécessaire (utilisant la variable TF_RESOURCE_ID).
+
+
+
+
+---
+
+2. Exemple du contenu généré dans child-pipeline.yml
+
+Pour chaque ressource listée (par exemple, module.network.aws_subnet.public[0]), les jobs suivants seront générés :
+
+stages:
+  - module.network.aws_subnet.public[0]
+
+Refresh plan module.network.aws_subnet.public[0]:
+  extends: .terraform-job
+  when: manual
+  stage: module.network.aws_subnet.public[0]
+  allow_failure: false
+  tags:
+    - "ocp_s"
+  script:
+    - terraform plan -refresh-only -target=module.network.aws_subnet.public[0]
+
+Remove module.network.aws_subnet.public[0]:
+  extends: .terraform-job
+  when: manual
+  stage: module.network.aws_subnet.public[0]
+  allow_failure: false
+  tags:
+    - "ocp_s"
+  script:
+    - terraform state rm module.network.aws_subnet.public[0]
+    - terraform plan -out=tfplan
+
+Fix tainted module.network.aws_subnet.public[0]:
+  extends: .terraform-job
+  when: manual
+  stage: module.network.aws_subnet.public[0]
+  allow_failure: false
+  tags:
+    - "ocp_s"
+  script:
+    - terraform untaint module.network.aws_subnet.public[0]
+    - terraform apply -auto-approve -refresh-only -target=module.network.aws_subnet.public[0]
+    - terraform plan -out=tfplan
+
+Recreate module.network.aws_subnet.public[0]:
+  extends: .terraform-job
+  when: manual
+  stage: module.network.aws_subnet.public[0]
+  allow_failure: false
+  tags:
+    - "ocp_s"
+  script:
+    - terraform apply -auto-approve -replace=module.network.aws_subnet.public[0]
+    - terraform plan -out=tfplan
+
+Import module.network.aws_subnet.public[0]:
+  extends: .terraform-job
+  when: manual
+  stage: module.network.aws_subnet.public[0]
+  allow_failure: false
+  tags:
+    - "ocp_s"
+  script:
+    - |
+      if [ -z "$TF_RESOURCE_ID" ]; then
+        echo "Please provide the Terraform resource ID via TF_RESOURCE_ID variable"
+        exit 1
+      fi
+    - terraform import module.network.aws_subnet.public[0] $TF_RESOURCE_ID
+
+
+---
+
+3. Analyse détaillée
+
+a) Structure des stages
+
+Chaque ressource aura son propre stage, nommé d’après le chemin complet de la ressource (ex. module.network.aws_subnet.public[0]).
+
+Cela permet d’exécuter les jobs pour chaque ressource de manière isolée et manuelle.
+
+
+b) Jobs générés
+
+Pour chaque ressource, les jobs suivants sont définis :
+
+Refresh plan : Vérifie l’état actuel de la ressource dans l’infrastructure.
+
+Remove : Supprime la ressource du state Terraform.
+
+Fix tainted : Répare une ressource marquée comme "tainted".
+
+Recreate : Recrée une ressource depuis zéro.
+
+Import : Importe une ressource existante dans Terraform.
+
+
+c) Condition manuelle (when: manual)
+
+Tous les jobs sont configurés pour être exécutés manuellement, vous laissant le contrôle total.
+
+d) Gestion des erreurs
+
+allow_failure: false garantit que les jobs échouent en cas de problème et n’affichent pas une réussite trompeuse.
+
+
+e) Tags
+
+Les jobs incluent des tags (ex. : "ocp_s") pour s’exécuter uniquement sur des runners spécifiques.
+
+
+
+---
+
+4. Points à surveiller
+
+1. Complexité accrue
+
+Si vous avez beaucoup de ressources, le fichier child-pipeline.yml peut devenir très volumineux.
+
+
+
+2. Gestion des dépendances
+
+Si certains jobs dépendent les uns des autres, vous devrez peut-être ajuster l’ordre des stages ou utiliser des dépendances explicites.
+
+
+
+3. Variable TF_RESOURCE_ID
+
+La commande terraform import nécessite que la variable TF_RESOURCE_ID soit correctement définie.
+
+
+
+4. Maintenance des modules
+
+Si le nom ou la structure des modules change, le script de génération doit être mis à jour pour éviter des erreurs dans les chemins des ressources.
+
+
+
+
+
+---
+
+5. Résumé
+
+child-pipeline.yml contiendra des jobs spécifiques pour chaque ressource listée dans terraform state list.
+
+Les jobs permettent de rafraîchir, supprimer, réparer, recréer ou importer chaque ressource.
+
+Ce pipeline est conçu pour fournir un contrôle granulaire et manuel sur les actions Terraform.
+
+Veillez à tester soigneusement ce processus pour des projets complexes afin d'éviter des erreurs dans la gestion des ressources.
+
+
